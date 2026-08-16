@@ -1,0 +1,97 @@
+/* ============ DSH 鲸鱼娘桌宠样式（视频动画） ============ */
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+}
+
+/* 全屏容器：fixed 覆盖全屏，穿透点击，不挡界面操作 */
+#root.whale-container {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* 鲸鱼娘根元素：可拖拽/点击交互区 */
+.whale-root {
+  cursor: grab;
+  touch-action: none;
+  pointer-events: auto;
+}
+.whale-root:active { cursor: grabbing; }
+
+/* 内部舞台：承载 A/B 双视频 */
+.whale-stage {
+  pointer-events: auto;
+  cursor: grab;
+}
+.whale-stage:active { cursor: grabbing; }
+
+/* 动画视频：铺满舞台、保持比例、交叉淡入 */
+.whale-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: auto;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  transform-origin: center;
+}
+.whale-video.is-front { opacity: 1; }
+.whale-video:active { cursor: grabbing; }
+
+/* 离线灰化：作用于视频舞台（灰化视频画面，气泡保持彩色可读） */
+.whale-root.offline .whale-stage,
+#root[data-mode="offline"] .whale-stage {
+  filter: grayscale(1);
+}
+#root[data-mode="offline"] .whale-stage { transition: filter 0.3s ease; }
+
+/* 拖拽反馈 */
+#root.dragging .whale-root { filter: drop-shadow(0 10px 16px rgba(20, 35, 110, 0.5)); }
+
+/* ---------------- 气泡 ---------------- */
+.whale-bubble {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 252px;
+  padding: 10px 14px 12px;
+  border-radius: 14px;
+  background: rgba(14, 26, 78, 0.92);
+  box-shadow: 0 6px 18px rgba(10, 20, 60, 0.35);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-line;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  backdrop-filter: blur(6px);
+}
+.whale-bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 10px solid transparent;
+  border-top-color: rgba(14, 26, 78, 0.92);
+  border-bottom-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .whale-video { transition: none; }
+  .whale-bubble { transition: none; }
+}
