@@ -10,7 +10,6 @@ import { invoke } from '@tauri-apps/api/core';
 type Facing = 'left' | 'right';
 
 // 常量（对齐参考 client.js）
-const SIZE = 400;          // 显示尺寸 px
 const CANVAS_H = 360;      // thumb 画布高度
 const FEET_Y = 330;        // 画布中"脚底"y 坐标
 const MOVE_MIN_PX = 60;
@@ -68,6 +67,7 @@ export class WhaleClient {
   private hitRegion = new HitRegionReporter();
 
   private facing: Facing = 'right';
+  private size = 400; // 显示尺寸，启动后按显示器缩放动态更新
   private baseState = 'idle';
   private phase: Phase = 'idle';
   private curKey: AnimKey = IDLE_BASE;
@@ -79,6 +79,10 @@ export class WhaleClient {
   private moveToken = 0;
   private movePlan: MovePlan | null = null;
   private dragMoveRAF: number | null = null;
+  private clickCount = 0;
+  private clickTimer: number | null = null;
+  private easterEggQueue: AnimKey[] = [];
+  private easterEggEnabled = true;
 
   private onWindowResize = (): void => this.renderPos();
 
@@ -87,13 +91,12 @@ export class WhaleClient {
     this.root = el('div', 'whale-root');
     this.stage = el('div', 'whale-stage');
     style(this.root, {
-      width: SIZE + 'px',
-      height: SIZE + 'px',
       position: 'absolute',
       left: '10px',
       top: '50px',
       willChange: 'left, top',
     });
+    this.applySize();
     style(this.stage, { position: 'absolute', inset: '0', pointerEvents: 'auto' });
 
     this.bubble.mount(this.root);
@@ -113,6 +116,22 @@ export class WhaleClient {
 
     // 鲸鱼娘固定在窗口内；窗口即鲸鱼娘大小，移动一律靠移动窗口
     this.hitRegion.start(this.root);
+    // 获取点击彩蛋开关
+    void invoke<boolean>('get_easter_egg_enabled')
+      .then((en) => {
+        if (typeof en === 'boolean') this.easterEggEnabled = en;
+      })
+      .catch(() => undefined);
+    // 按显示器缩放因子动态调整尺寸（等比缩放 + 竖屏加成由 Rust 计算）
+    void invoke<number>('get_pet_size')
+      .then((sz) => {
+        if (typeof sz === 'number' && sz > 0) {
+          this.size = sz;
+          this.applySize();
+          this.applyLanding();
+        }
+      })
+      .catch(() => undefined);
     this.startIdle();
   }
 
@@ -196,7 +215,7 @@ export class WhaleClient {
   // ---------- 落地对齐 + 位置渲染 ----------
   private applyLanding(): void {
     if (!this.stage) return;
-    const pad = (SIZE * (CANVAS_H - FEET_Y)) / CANVAS_H;
+    const pad = (this.size * (CANVAS_H - FEET_Y)) / CANVAS_H;
     this.stage.style.transform = 'translateY(' + pad + 'px)';
   }
 
@@ -206,6 +225,12 @@ export class WhaleClient {
 
   private renderPos(): void {
     // 鲸鱼娘固定在窗口内，窗口由拖拽/自动移动驱动，无需在此移动元素
+  }
+
+  private applySize(): void {
+    if (!this.root) return;
+    this.root.style.width = this.size + 'px';
+    this.root.style.height = this.size + 'px';
   }
 
   // ---------- 待机链（idle：idle_breath 循环 + 随机穿插） ----------
@@ -290,7 +315,11 @@ export class WhaleClient {
         this.resumeBase();
         break;
       case 'user':
-        this.resumeBase();
+        if (this.easterEggQueue.length > 0) {
+          this.playNextEasterEgg();
+        } else {
+          this.resumeBase();
+        }
         break;
       case 'idle':
       case 'offline':
@@ -446,7 +475,39 @@ export class WhaleClient {
     if (this.justDragged) return;
     this.stopIdle();
     this.stopMove();
+    // 彩蛋：2 秒内连续点击 5 次触发连播动画
+    this.clickCount += 1;
+    if (this.clickTimer !== null) clearTimeout(this.clickTimer);
+    this.clickTimer = window.setTimeout(() => {
+      this.clickCount = 0;
+      this.clickTimer = null;
+    }, 2000);
+    if (this.clickCount >= 5 && this.easterEggEnabled) {
+      this.clickCount = 0;
+      if (this.clickTimer !== null) {
+        clearTimeout(this.clickTimer);
+        this.clickTimer = null;
+      }
+      this.playEasterEgg();
+      return;
+    }
     this.playOnce(pick(CLICK_POOL), 'user');
+  }
+
+  private playEasterEgg(): void {
+    this.bubble.show('彩蛋！');
+    this.easterEggQueue = ['act_spin', 'fx_bubbles', 'act_caught'];
+    this.playNextEasterEgg();
+  }
+
+  private playNextEasterEgg(): void {
+    const key = this.easterEggQueue.shift();
+    if (!key) {
+      this.bubble.hide();
+      this.resumeBase();
+      return;
+    }
+    this.playOnce(key, 'user');
   }
 }
 

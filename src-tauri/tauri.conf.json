@@ -39,8 +39,8 @@
       "icons/icon.png"
     ],
     "resources": [
-      "resources/attention.m4a",
-      "resources/done.m4a"
+      "resources/attention.wav",
+      "resources/done.wav"
     ]
   }
 }

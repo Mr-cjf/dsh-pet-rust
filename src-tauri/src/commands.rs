@@ -14,6 +14,33 @@ pub fn get_state(state: State<'_, Arc<Mutex<engine::EngineState>>>) -> Snapshot 
     engine::build_snapshot(&st)
 }
 
+/// 计算桌宠显示尺寸：基础 400 按显示器缩放因子等比缩放，竖屏加成 20%。
+#[tauri::command]
+pub fn get_pet_size(app: tauri::AppHandle) -> f64 {
+    let base = 400.0;
+    let Some(window) = app.get_webview_window("main") else {
+        return base;
+    };
+    let Some(monitor) = window
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .or(window.current_monitor().ok().flatten())
+    else {
+        return base;
+    };
+    let scale = monitor.scale_factor().max(1.0);
+    let sz = monitor.size();
+    let w = sz.width as f64;
+    let h = sz.height as f64;
+    let mut s = base * scale;
+    // 竖屏显示器（高远大于宽）时宠物加成，避免过小
+    if h > w * 1.2 {
+        s *= 1.2;
+    }
+    s
+}
+
 /// 返回主窗口当前位置（逻辑坐标，CSS 像素，与前端 e.screenX/e.screenY 一致）。
 #[tauri::command]
 pub fn get_window_position(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
@@ -142,10 +169,19 @@ pub fn drag_move(app: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// 结束拖拽，清除快照。
+/// 结束拖拽，清除快照并记录窗口位置。
 #[tauri::command]
-pub fn drag_end() {
+pub fn drag_end(app: tauri::AppHandle) {
     *DRAG_SNAPSHOT.lock().unwrap() = None;
+    if crate::tray::is_remember_position() {
+        crate::config::remember_window_position(&app);
+    }
+}
+
+/// 当前是否启用点击彩蛋。
+#[tauri::command]
+pub fn get_easter_egg_enabled() -> bool {
+    crate::tray::is_easter_egg_enabled()
 }
 
 /// 按增量移动主窗口（帧间增量方式，避免 clientX 基准随窗口移动而漂移）。

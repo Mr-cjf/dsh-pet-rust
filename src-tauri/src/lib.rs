@@ -1,5 +1,6 @@
 mod audio;
 mod commands;
+mod config;
 mod discover;
 mod engine;
 mod hit_test;
@@ -24,7 +25,7 @@ pub fn run() {
         }))
         .invoke_handler(tauri::generate_handler![audio::play_sound, commands::get_state, commands::move_window,
             commands::set_hit_region, commands::frontend_log, commands::get_window_position, commands::move_window_by,
-            commands::drag_start, commands::drag_move, commands::drag_end])
+            commands::drag_start, commands::drag_move, commands::drag_end, commands::get_pet_size, commands::get_easter_egg_enabled])
         .setup(|app| {
             // 初始化日志，使 engine/sse 里的 log::info!/warn! 生效
             let _ = env_logger::Builder::from_env(
@@ -36,7 +37,17 @@ pub fn run() {
             // 仅把窗口定位到主显示器工作区右下角（桌宠习惯位置），并启动“光标穿透”轮询：
             // 仅当全局光标落在鲸鱼娘命中区内时才接收鼠标，其余区域整窗穿透。
             if let Some(window) = app.get_webview_window("main") {
-                if let Some(monitor) = window
+                // 位置记忆：优先恢复上次位置，否则默认右下角
+                let cfg = config::load(app.handle());
+                let mut restored = false;
+                if cfg.remember_position {
+                    if let (Some(x), Some(y)) = (cfg.window_x, cfg.window_y) {
+                        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+                        restored = true;
+                    }
+                }
+                if !restored {
+                    if let Some(monitor) = window
                     .primary_monitor()
                     .ok()
                     .flatten()
@@ -48,11 +59,12 @@ pub fn run() {
                     let wa_size = wa.size.to_logical::<f64>(scale);
                     let size = window
                         .inner_size()
-                        .unwrap_or(tauri::PhysicalSize::new(1280, 800))
+                        .unwrap_or(tauri::PhysicalSize::new(420, 460))
                         .to_logical::<f64>(scale);
                     let x = (wa_pos.x + wa_size.width - size.width - 24.0).max(0.0);
                     let y = (wa_pos.y + wa_size.height - size.height - 24.0).max(0.0);
                     let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+                    }
                 }
 
                 // 关闭窗口 = 隐藏到托盘（不退出）；真正退出请用托盘菜单“退出”
@@ -84,9 +96,17 @@ pub fn run() {
                 .build()
                 .expect("构建 reqwest 客户端失败");
             let handle = app.handle().clone();
+            let sound_handle = handle.clone();
+            // 记录上次状态：只在状态变化时触发音效，避免 done/attention 持续期间反复播放
+            let last_sound_state: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
             let sink: engine::SnapshotSink = Arc::new(move |snapshot| {
                 if let Err(e) = handle.emit("dsh-state", &snapshot) {
                     log::warn!("[pet] emit dsh-state 失败: {e}");
+                }
+                let mut last = last_sound_state.lock().unwrap();
+                if *last != snapshot.state {
+                    *last = snapshot.state.clone();
+                    audio::notify_state_change(&sound_handle, &snapshot.state);
                 }
             });
 

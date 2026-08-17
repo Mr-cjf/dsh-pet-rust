@@ -66,8 +66,9 @@ export function initRenderer(): void {
             done: snap.done ?? [],
           });
         });
+
       } catch (err) {
-        console.warn('[dsh-pet] dsh-state 监听失败', err);
+        console.warn('[dsh-pet] 事件监听失败', err);
       }
     })();
   } else {
