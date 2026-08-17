@@ -23,7 +23,8 @@ pub fn run() {
             }
         }))
         .invoke_handler(tauri::generate_handler![audio::play_sound, commands::get_state, commands::move_window,
-            commands::set_hit_region])
+            commands::set_hit_region, commands::frontend_log, commands::get_window_position, commands::move_window_by,
+            commands::drag_start, commands::drag_move, commands::drag_end])
         .setup(|app| {
             // 初始化日志，使 engine/sse 里的 log::info!/warn! 生效
             let _ = env_logger::Builder::from_env(
@@ -31,40 +32,39 @@ pub fn run() {
             )
             .try_init();
 
-            // 主窗口全屏透明 overlay：覆盖主显示器工作区（排除任务栏等系统保留区域）
+            // 不再把窗口设置为全屏 overlay，避免透明置顶窗口劫持整个屏幕的鼠标操作。
+            // 仅把窗口定位到主显示器工作区右下角（桌宠习惯位置），并启动“光标穿透”轮询：
+            // 仅当全局光标落在鲸鱼娘命中区内时才接收鼠标，其余区域整窗穿透。
             if let Some(window) = app.get_webview_window("main") {
-                // 优先系统主显示器，回退到窗口当前所在显示器
-                let monitor = window
-                    .primary_monitor()?
-                    .or(window.current_monitor()?);
-                if let Some(monitor) = monitor {
-                    let scale_factor = monitor.scale_factor();
-                    // work_area 为物理像素（相对虚拟桌面的矩形，已排除任务栏）
-                    let work_area = monitor.work_area();
-                    // 物理 -> 逻辑：除以 scale_factor，得到 CSS 像素（与前端 e.screenX/Y 一致）
-                    let logical_size = work_area.size.to_logical::<f64>(scale_factor);
-                    let logical_position = work_area.position.to_logical::<f64>(scale_factor);
-                    log::info!(
-                        "[pet] 全屏 overlay：monitor={:?} scale_factor={:.2} work_area物理={:?} -> 逻辑尺寸={:.1}x{:.1} 逻辑位置=({:.1}, {:.1})",
-                        monitor.name(),
-                        scale_factor,
-                        work_area,
-                        logical_size.width,
-                        logical_size.height,
-                        logical_position.x,
-                        logical_position.y
-                    );
-                    window.set_size(logical_size)?;
-                    window.set_position(logical_position)?;
-                } else {
-                    log::warn!("[pet] 未找到可用显示器，跳过全屏 overlay 尺寸设置");
+                if let Some(monitor) = window
+                    .primary_monitor()
+                    .ok()
+                    .flatten()
+                    .or(window.current_monitor().ok().flatten())
+                {
+                    let scale = monitor.scale_factor();
+                    let wa = monitor.work_area();
+                    let wa_pos = wa.position.to_logical::<f64>(scale);
+                    let wa_size = wa.size.to_logical::<f64>(scale);
+                    let size = window
+                        .inner_size()
+                        .unwrap_or(tauri::PhysicalSize::new(1280, 800))
+                        .to_logical::<f64>(scale);
+                    let x = (wa_pos.x + wa_size.width - size.width - 24.0).max(0.0);
+                    let y = (wa_pos.y + wa_size.height - size.height - 24.0).max(0.0);
+                    let _ = window.set_position(tauri::LogicalPosition::new(x, y));
                 }
 
-                // 命中测试子类化：矩形内接收鼠标事件，矩形外穿透（Windows WM_NCHITTEST）
-                if let Err(e) = hit_test::init_hit_test(&window) {
-                    log::warn!("[pet] 命中测试初始化失败: {e}");
-                }
+                // 关闭窗口 = 隐藏到托盘（不退出）；真正退出请用托盘菜单“退出”
+                let close_window = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = close_window.hide();
+                    }
+                });
             }
+            hit_test::start_cursor_through(app.handle().clone());
 
             // macOS：隐藏 Dock 图标（桌面宠物的辅助型激活策略）
             #[cfg(target_os = "macos")]
@@ -98,11 +98,7 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, event| {
-            // 退出时恢复窗口过程，避免子类化残留
-            if let tauri::RunEvent::Exit = event {
-                #[cfg(target_os = "windows")]
-                hit_test::cleanup_hit_test();
-            }
+        .run(|_app_handle, _event| {
+            // 点击穿透由 set_ignore_cursor_events 控制，进程退出后系统自动清理，无需额外处理
         });
 }

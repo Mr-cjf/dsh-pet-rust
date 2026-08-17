@@ -138,12 +138,17 @@ pub fn build_snapshot(state: &EngineState) -> Snapshot {
 
     let state_name = if !state.connected {
         "offline"
+    } else if state.last_error.is_some() {
+        "error"
     } else if !attention.is_empty() {
         "attention"
     } else if !running.is_empty() {
         "working"
     } else if !done.is_empty() {
         "done"
+    } else if !state.sessions.is_empty() {
+        // 有会话但都未运行：回合中空闲（等待下一轮）
+        "turn-idle"
     } else {
         "idle"
     };
@@ -190,7 +195,7 @@ async fn poll_sessions(
     client: reqwest::Client,
     state: Arc<Mutex<EngineState>>,
     sink: SnapshotSink,
-) {
+) -> bool {
     let items: Vec<Value> = match rpc::rpc(&client, "session.list", json!({})).await {
         Ok(v) => v
             .get("items")
@@ -204,7 +209,7 @@ async fn poll_sessions(
                 st.last_error = Some(e);
             }
             emit(&state, &sink);
-            return;
+            return false;
         }
     };
 
@@ -253,6 +258,7 @@ async fn poll_sessions(
         st.done.retain(|_, d| now - d.at <= DONE_WINDOW_MS);
     }
     emit(&state, &sink);
+    true
 }
 
 /// 处理 /api/events.mux 帧（main.js 的 handleFrame()）。
@@ -438,76 +444,89 @@ pub async fn run(
         .build()
         .unwrap_or_else(|_| client.clone());
 
-    // 自动发现 DSH：失败进入离线态并每 10s 重试，直到找到再继续。
+    // 外层循环：DSH 可能重启导致端口变化，失联后重新发现并重连。
     loop {
-        match discover::discover_dsh_url(&discovery_client).await {
-            Some(url) => {
-                rpc::set_dsh_url(url.clone());
-                log::info!("[pet] 已发现 DSH: {}", url);
-                break;
-            }
-            None => {
-                {
-                    let mut st = state.lock().unwrap();
-                    st.connected = false;
-                    st.last_error = Some("未发现 DSH，10 秒后重试".to_string());
+        // 自动发现 DSH：失败进入离线态并每 10s 重试，直到找到。
+        loop {
+            match discover::discover_dsh_url(&discovery_client).await {
+                Some(url) => {
+                    rpc::set_dsh_url(url.clone());
+                    log::info!("[pet] 已发现 DSH: {}", url);
+                    break;
                 }
-                emit(&state, &sink);
-                tokio::time::sleep(Duration::from_secs(10)).await;
+                None => {
+                    {
+                        let mut st = state.lock().unwrap();
+                        st.connected = false;
+                        st.last_error = Some("未发现 DSH，10 秒后重试".to_string());
+                    }
+                    emit(&state, &sink);
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                }
             }
         }
-    }
 
-    // mux 连接前清空待决（main.js connectMux 的语义：服务端会重放）
-    {
-        let mut st = state.lock().unwrap();
-        st.pending_approvals.clear();
-        st.pending_questions.clear();
-    }
+        // mux 连接前清空待决（main.js connectMux 的语义：服务端会重放）
+        {
+            let mut st = state.lock().unwrap();
+            st.pending_approvals.clear();
+            st.pending_questions.clear();
+        }
 
-    // host：running 翻转即时推送
-    let host_frame_state = state.clone();
-    let host_frame_sink = sink.clone();
-    let host_frame_client = client.clone();
-    let host_on_frame = move |p: Value| {
-        handle_host_frame(&host_frame_state, &host_frame_sink, &host_frame_client, p);
-    };
-    let host_open_state = state.clone();
-    let host_open_sink = sink.clone();
-    let host_open_client = client.clone();
-    let host_on_open = move || {
-        let c = host_open_client.clone();
-        let st = host_open_state.clone();
-        let sk = host_open_sink.clone();
-        tokio::spawn(async move {
-            poll_sessions(c, st, sk).await;
-        });
-    };
-    let _host_handle = sse::connect_sse(
-        client.clone(),
-        "/api/events.host".to_string(),
-        host_on_frame,
-        host_on_open,
-    );
+        // host：running 翻转即时推送
+        let host_frame_state = state.clone();
+        let host_frame_sink = sink.clone();
+        let host_frame_client = client.clone();
+        let host_on_frame = move |p: Value| {
+            handle_host_frame(&host_frame_state, &host_frame_sink, &host_frame_client, p);
+        };
+        let host_open_state = state.clone();
+        let host_open_sink = sink.clone();
+        let host_open_client = client.clone();
+        let host_on_open = move || {
+            let c = host_open_client.clone();
+            let st = host_open_state.clone();
+            let sk = host_open_sink.clone();
+            tokio::spawn(async move {
+                let _ = poll_sessions(c, st, sk).await;
+            });
+        };
+        let _host_handle = sse::connect_sse(
+            client.clone(),
+            "/api/events.host".to_string(),
+            host_on_frame,
+            host_on_open,
+        );
 
-    // mux：审批/提问/队列推送
-    let mux_frame_state = state.clone();
-    let mux_frame_sink = sink.clone();
-    let mux_on_frame = move |p: Value| {
-        handle_frame(&mux_frame_state, &mux_frame_sink, p);
-    };
-    let _mux_handle = sse::connect_sse(
-        client.clone(),
-        "/api/events.mux".to_string(),
-        mux_on_frame,
-        || {},
-    );
+        // mux：审批/提问/队列推送
+        let mux_frame_state = state.clone();
+        let mux_frame_sink = sink.clone();
+        let mux_on_frame = move |p: Value| {
+            handle_frame(&mux_frame_state, &mux_frame_sink, p);
+        };
+        let _mux_handle = sse::connect_sse(
+            client.clone(),
+            "/api/events.mux".to_string(),
+            mux_on_frame,
+            || {},
+        );
 
-    // 2s 轮询 session.list
-    let mut interval = tokio::time::interval(Duration::from_millis(POLL_MS));
-    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    loop {
-        interval.tick().await;
-        poll_sessions(client.clone(), state.clone(), sink.clone()).await;
+        // 2s 轮询 session.list；连续失败若干次视为 DSH 失联，跳出并重新发现
+        let mut interval = tokio::time::interval(Duration::from_millis(POLL_MS));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut fail_count: u32 = 0;
+        loop {
+            interval.tick().await;
+            if poll_sessions(client.clone(), state.clone(), sink.clone()).await {
+                fail_count = 0;
+            } else {
+                fail_count += 1;
+                if fail_count >= 3 {
+                    log::warn!("[pet] DSH 连接失败 {} 次，重新发现", fail_count);
+                    break;
+                }
+            }
+        }
+        // 离开作用域时 SSE 句柄 drop，外层循环重新发现并重建连接
     }
 }

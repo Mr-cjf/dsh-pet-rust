@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "dsh-pet",
-        "width": 1280,
-        "height": 800,
+        "width": 420,
+        "height": 460,
         "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,

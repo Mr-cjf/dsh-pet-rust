@@ -14,6 +14,11 @@ function pick<T>(pool: readonly T[]): T {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+/** 截断长标题，避免气泡文案过长导致多行换行溢出。 */
+function truncate(text: string, max: number): string {
+  return text.length > max ? text.slice(0, max) + '…' : text;
+}
+
 const REACT_POOL: readonly AnimKey[] = ['react_scared', 'react_bow'];
 const DONE_POOL: readonly AnimKey[] = ['click_happy', 'act_tailslap'];
 const WORK_POOL: readonly AnimKey[] = ['work_cube', 'work_toycar', 'work_tap'];
@@ -30,7 +35,7 @@ export function mapDshState(snapshot: DshSnapshot): DshMapResult {
         bubbleText: `有 ${snapshot.attention.length} 件事需要确认`,
       };
     case 'working': {
-      const task = snapshot.running[0] ?? '任务';
+      const task = truncate(snapshot.running[0] ?? '任务', 12);
       return {
         kind: 'work',
         animKey: pick(WORK_POOL),
@@ -38,13 +43,17 @@ export function mapDshState(snapshot: DshSnapshot): DshMapResult {
       };
     }
     case 'done': {
-      const item = snapshot.done[0];
+      const item = snapshot.done[0] ? truncate(snapshot.done[0], 10) : null;
       return {
         kind: 'done',
         animKey: pick(DONE_POOL),
         bubbleText: item ? `搞定啦~（${item}）` : '搞定啦~',
       };
     }
+    case 'error':
+      return { kind: 'react', animKey: 'act_rage', bubbleText: '出错了…' };
+    case 'turn-idle':
+      return { kind: 'idle', animKey: 'idle_lookaround', bubbleText: '等你下一步…' };
     case 'idle':
     default:
       return { kind: 'idle', animKey: 'idle_breath', bubbleText: null };

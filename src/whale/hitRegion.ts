@@ -29,6 +29,7 @@ export class HitRegionReporter {
   private raf: number | null = null;
   private last: HitRect | null = null;
   private running = false;
+  private override: HitRect | null = null;
 
   start(root: HTMLElement): void {
     if (!hasTauriRuntime()) return; // 纯 vite dev 无 Tauri，跳过
@@ -36,6 +37,13 @@ export class HitRegionReporter {
     this.root = root;
     this.running = true;
     this.raf = requestAnimationFrame(this.tick);
+  }
+
+  /** 拖拽等交互期间临时覆盖命中区（例如设为全窗口），避免穿透轮询误判导致拖拽中断。 */
+  setOverride(rect: HitRect | null): void {
+    this.override = rect;
+    this.last = null;
+    this.report();
   }
 
   stop(clear = true): void {
@@ -62,8 +70,13 @@ export class HitRegionReporter {
 
   private report(): void {
     if (!this.root || !hasTauriRuntime()) return;
-    const r = this.root.getBoundingClientRect();
-    const rect: HitRect = { x: r.left, y: r.top, w: r.width, h: r.height };
+    let rect: HitRect;
+    if (this.override) {
+      rect = this.override;
+    } else {
+      const r = this.root.getBoundingClientRect();
+      rect = { x: r.left, y: r.top, w: r.width, h: r.height };
+    }
     if (this.last && closeEnough(rect, this.last, THRESHOLD_PX)) return;
     this.last = rect;
     void invoke('set_hit_region', { rect }).catch(() => undefined);

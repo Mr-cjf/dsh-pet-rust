@@ -2,6 +2,7 @@
 import type { AnimKey } from './types';
 import { MANIFEST } from './videoManifest';
 import { el, style } from './dom';
+import { invoke } from '@tauri-apps/api/core';
 
 type Facing = 'left' | 'right';
 
@@ -28,7 +29,7 @@ export class VideoManager {
     this.frontA = this.makeVideo();
     this.frontB = this.makeVideo();
     this.frontA.classList.add(FACING_CLASS);
-    style(stage, { position: 'relative', overflow: 'hidden' });
+    style(stage, { overflow: 'hidden' }); // 保持 mount 中设置的 absolute+inset:0，避免塌陷裁剪
     stage.appendChild(this.frontA);
     stage.appendChild(this.frontB);
   }
@@ -87,6 +88,7 @@ export class VideoManager {
       this.current = { key, once };
       target.style.transform = this.facingTransform();
       target.play().catch(() => {});
+      void invoke('frontend_log', { msg: `video ready: ${key} ${entry.file} w=${target.videoWidth} h=${target.videoHeight}` }).catch(() => undefined);
     };
     target.addEventListener('loadeddata', onReady);
 
@@ -94,6 +96,7 @@ export class VideoManager {
       target.removeEventListener('error', onError);
       if (this.pending?.gen !== nextGen) return; // 过期回调放弃
       console.error('[videoManager] 视频加载失败:', entry.file);
+      void invoke('frontend_log', { msg: `video ERROR: ${key} ${entry.file}` }).catch(() => undefined);
       this.pending = null;
     };
     target.addEventListener('error', onError);

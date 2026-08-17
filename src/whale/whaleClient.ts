@@ -5,16 +5,16 @@ import { VideoManager } from './videoManager';
 import { HitRegionReporter } from './hitRegion';
 import { Bubble } from './bubble';
 import { mapDshState } from './stateMapper';
+import { invoke } from '@tauri-apps/api/core';
 
 type Facing = 'left' | 'right';
 
 // 常量（对齐参考 client.js）
-const SIZE = 260;          // 显示尺寸 px
+const SIZE = 400;          // 显示尺寸 px
 const CANVAS_H = 360;      // thumb 画布高度
 const FEET_Y = 330;        // 画布中"脚底"y 坐标
 const MOVE_MIN_PX = 60;
 const MOVE_MAX_PX = 240;
-const MOVE_MARGIN = 20;    // 屏幕边缘安全边距
 const MOVE_LEAD_SEC = 2;   // 移动动画开头准备动作时长
 const MOVE_TAIL_SEC = 2;   // 移动动画结尾收尾动作时长
 const DRAG_THRESHOLD = 5;  // 拖拽判定阈值 px
@@ -50,16 +50,13 @@ type Phase = 'idle' | 'turn' | 'idle_once' | 'move' | 'work' | 'react' | 'user' 
 interface DragState {
   active: boolean;
   dragging: boolean;
-  sx: number;
-  sy: number;
+  startX: number; // 按下 clientX（拖拽阈值判断）
+  startY: number; // 按下 clientY
 }
 
 interface MovePlan {
-  startRatio: number;
-  targetRatio: number;
-  startYRatio: number;
   dir: 1 | -1;
-  totalRatio: number;
+  total: number; // 总移动像素
 }
 
 export class WhaleClient {
@@ -71,17 +68,17 @@ export class WhaleClient {
   private hitRegion = new HitRegionReporter();
 
   private facing: Facing = 'right';
-  private pos: { rx: number; ry: number } | null = null;
   private baseState = 'idle';
   private phase: Phase = 'idle';
   private curKey: AnimKey = IDLE_BASE;
 
   private idleTimer: number | null = null;
-  private drag: DragState = { active: false, dragging: false, sx: 0, sy: 0 };
+  private drag: DragState = { active: false, dragging: false, startX: 0, startY: 0 };
   private justDragged = false;
   private moveRaf: number | null = null;
   private moveToken = 0;
   private movePlan: MovePlan | null = null;
+  private dragMoveRAF: number | null = null;
 
   private onWindowResize = (): void => this.renderPos();
 
@@ -93,6 +90,8 @@ export class WhaleClient {
       width: SIZE + 'px',
       height: SIZE + 'px',
       position: 'absolute',
+      left: '10px',
+      top: '50px',
       willChange: 'left, top',
     });
     style(this.stage, { position: 'absolute', inset: '0', pointerEvents: 'auto' });
@@ -112,9 +111,7 @@ export class WhaleClient {
     window.addEventListener('pointercancel', (e) => this.onPointerUp(e));
     window.addEventListener('resize', this.onWindowResize);
 
-    // 默认右下角地面
-    this.pos = { rx: 1 - (24 + SIZE / 2) / window.innerWidth, ry: 1 - (20 + SIZE / 2) / window.innerHeight };
-    this.renderPos();
+    // 鲸鱼娘固定在窗口内；窗口即鲸鱼娘大小，移动一律靠移动窗口
     this.hitRegion.start(this.root);
     this.startIdle();
   }
@@ -122,6 +119,7 @@ export class WhaleClient {
   setState(snapshot: DshSnapshot): void {
     const mapped = mapDshState(snapshot);
     const changed = snapshot.state !== this.baseState;
+
 
     if (changed) {
       this.stopIdle();
@@ -144,7 +142,8 @@ export class WhaleClient {
         this.startWork();
         break;
       case 'react':
-        if (mapped.animKey) this.playOnce(mapped.animKey, 'react');
+        // attention / error 是持续状态：循环播放，直到状态切换
+        if (mapped.animKey) this.playLoop(mapped.animKey);
         break;
       case 'done':
         if (mapped.animKey) this.playOnce(mapped.animKey, 'react');
@@ -206,14 +205,7 @@ export class WhaleClient {
   }
 
   private renderPos(): void {
-    if (!this.root || !this.pos) return;
-    const W = window.innerWidth;
-    const H = window.innerHeight;
-    const half = SIZE / 2;
-    const left = Math.min(Math.max(this.pos.rx * W - half, 0), W - SIZE);
-    const top = Math.min(Math.max(this.pos.ry * H - half, 0), H - SIZE);
-    this.root.style.left = left + 'px';
-    this.root.style.top = top + 'px';
+    // 鲸鱼娘固定在窗口内，窗口由拖拽/自动移动驱动，无需在此移动元素
   }
 
   // ---------- 待机链（idle：idle_breath 循环 + 随机穿插） ----------
@@ -266,7 +258,8 @@ export class WhaleClient {
   // ---------- 工作循环 ----------
   private startWork(): void {
     this.phase = 'work';
-    this.playOnce(pick(WORK_POOL), 'work');
+    // 工作状态持续期间循环重复播放，状态切换时才被新动画替换
+    this.playLoop(pick(WORK_POOL));
   }
 
   private nextWork(): void {
@@ -275,7 +268,7 @@ export class WhaleClient {
       return;
     }
     this.phase = 'work';
-    this.playOnce(pick(WORK_POOL), 'work');
+    this.playLoop(pick(WORK_POOL));
   }
 
   // ---------- 动画播完链 ----------
@@ -328,21 +321,8 @@ export class WhaleClient {
   private tryMove(): boolean {
     if (this.moveRaf !== null || this.movePlan) return true; // 已在移动
     const dir: 1 | -1 = this.facing === 'right' ? 1 : -1;
-    const W = window.innerWidth;
-    const cx = this.pos ? this.pos.rx * W : W - 24 - SIZE / 2;
     const distance = randomBetween(MOVE_MIN_PX, MOVE_MAX_PX);
-    const target = cx + dir * distance;
-    const leftBound = MOVE_MARGIN + SIZE / 2;
-    const rightBound = W - MOVE_MARGIN - SIZE / 2;
-    if (target < leftBound || target > rightBound) return false;
-
-    this.movePlan = {
-      startRatio: cx / W,
-      startYRatio: this.pos ? this.pos.ry : (window.innerHeight - 20 - SIZE / 2) / window.innerHeight,
-      targetRatio: target / W,
-      dir,
-      totalRatio: Math.abs(target - cx) / W,
-    };
+    this.movePlan = { dir, total: distance };
     this.setFacing(dir === 1 ? 'right' : 'left');
     // move_runleft 是"向左奔跑"专用姿态；向右移动时用对称姿态，避免人物面朝右却用左跑动画
     const moveKey = dir === 1 ? pick(['move_crab', 'move_floatstep'] as const) : pick(MOVE_POOL);
@@ -364,26 +344,26 @@ export class WhaleClient {
     const plan = this.movePlan;
     const token = ++this.moveToken;
     this.movePlan = null;
+    let lastProgress = 0;
     const step = (): void => {
-      if (this.moveToken !== token || !this.video || !this.root) return;
+      if (this.moveToken !== token || !this.video) return;
       const duration = this.video.duration() || 10.09;
       const t = this.video.currentTime();
-      const W = window.innerWidth;
-      const H = window.innerHeight;
-      let ratioX: number;
+      let progress: number;
       if (t <= MOVE_LEAD_SEC) {
-        ratioX = plan.startRatio;
+        progress = 0;
       } else if (t >= duration - MOVE_TAIL_SEC) {
-        ratioX = plan.targetRatio;
+        progress = 1;
       } else {
         const travelWindow = Math.max(0.1, duration - MOVE_LEAD_SEC - MOVE_TAIL_SEC);
-        ratioX = plan.startRatio + plan.dir * plan.totalRatio * ((t - MOVE_LEAD_SEC) / travelWindow);
+        progress = (t - MOVE_LEAD_SEC) / travelWindow;
       }
-      this.pos = { rx: ratioX, ry: plan.startYRatio };
-      const left = ratioX * W - SIZE / 2;
-      const top = plan.startYRatio * H - SIZE / 2;
-      this.root.style.left = left + 'px';
-      this.root.style.top = top + 'px';
+      // 帧间增量移动窗口，避免重复累加
+      const stepPx = plan.dir * plan.total * (progress - lastProgress);
+      if (Math.abs(stepPx) > 0.1) {
+        void invoke('move_window_by', { dx: stepPx, dy: 0 }).catch(() => undefined);
+      }
+      lastProgress = progress;
       if (t < duration - MOVE_TAIL_SEC) {
         this.moveRaf = requestAnimationFrame(step);
       } else {
@@ -409,43 +389,55 @@ export class WhaleClient {
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     this.stopIdle();
     this.stopMove();
-    this.drag = { active: true, dragging: false, sx: e.clientX, sy: e.clientY };
+    // 拖拽期间把命中区临时设为整个窗口，避免穿透轮询误判导致拖拽中断
+    this.hitRegion.setOverride({ x: 0, y: 0, w: window.innerWidth, h: window.innerHeight });
+    this.drag = { active: true, dragging: false, startX: e.clientX, startY: e.clientY };
+    // 拖拽快照交给 Rust：用全局光标屏幕坐标计算窗口绝对位置，避免 clientX 随窗口移动漂移
+    void invoke('drag_start').catch(() => undefined);
   }
 
   private onPointerMove(e: PointerEvent): void {
     const d = this.drag;
     if (!d.active) return;
-    const dx = e.clientX - d.sx;
-    const dy = e.clientY - d.sy;
     if (!d.dragging) {
-      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      if (Math.hypot(e.clientX - d.startX, e.clientY - d.startY) < DRAG_THRESHOLD) return;
       d.dragging = true;
       this.container?.classList.add('dragging');
       this.clearLanding();
       this.playOnce(DRAG_KEY, 'user');
     }
-    if (this.root) {
-      this.pos = { rx: e.clientX / window.innerWidth, ry: e.clientY / window.innerHeight };
-      this.root.style.left = e.clientX - SIZE / 2 + 'px';
-      this.root.style.top = e.clientY - SIZE / 2 + 'px';
+    // 每帧节流通知 Rust 拖拽移动（Rust 用屏幕坐标 + 快照计算窗口绝对位置）
+    if (this.dragMoveRAF === null) {
+      this.dragMoveRAF = requestAnimationFrame(() => {
+        this.dragMoveRAF = null;
+        if (this.drag.active) {
+          void invoke('drag_move').catch(() => undefined);
+        }
+      });
     }
   }
 
-  private onPointerUp(e: PointerEvent): void {
+  private onPointerUp(_e: PointerEvent): void {
     const d = this.drag;
     if (!d.active) return;
     const wasDragging = d.dragging;
     d.active = false;
     d.dragging = false;
+    if (this.dragMoveRAF !== null) {
+      cancelAnimationFrame(this.dragMoveRAF);
+      this.dragMoveRAF = null;
+    }
+    void invoke('drag_end').catch(() => undefined);
     if (wasDragging) {
+      // 拖拽结束：恢复鲸鱼娘真实命中区（由 reporter 轮询上报）
+      this.hitRegion.setOverride(null);
       this.justDragged = true;
       window.setTimeout(() => { this.justDragged = false; }, GHOST_CLICK_MS);
-      this.pos = { rx: e.clientX / window.innerWidth, ry: e.clientY / window.innerHeight };
       this.container?.classList.remove('dragging');
-      this.renderPos();
       this.applyLanding();
       this.resumeBase();
     } else {
+      this.hitRegion.setOverride(null);
       this.respondToClick();
     }
   }
