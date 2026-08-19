@@ -1,4 +1,5 @@
 mod audio;
+mod autostart;
 mod commands;
 mod config;
 mod discover;
@@ -6,6 +7,7 @@ mod engine;
 mod hit_test;
 mod rpc;
 mod sse;
+mod theme;
 mod tray;
 
 use std::sync::{Arc, Mutex};
@@ -23,15 +25,30 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
-        .invoke_handler(tauri::generate_handler![audio::play_sound, commands::get_state, commands::move_window,
-            commands::set_hit_region, commands::frontend_log, commands::get_window_position, commands::move_window_by,
-            commands::drag_start, commands::drag_move, commands::drag_end, commands::get_pet_size, commands::get_easter_egg_enabled])
+        .invoke_handler(tauri::generate_handler![
+            audio::play_sound,
+            commands::get_state,
+            commands::move_window,
+            commands::set_hit_region,
+            commands::frontend_log,
+            commands::get_window_position,
+            commands::move_window_by,
+            commands::drag_start,
+            commands::drag_move,
+            commands::drag_end,
+            commands::get_pet_size,
+            commands::get_easter_egg_enabled,
+            commands::get_themes,
+            commands::get_theme,
+            commands::get_theme_definition,
+            commands::pick_webm_files,
+            commands::save_theme
+        ])
         .setup(|app| {
             // 初始化日志，使 engine/sse 里的 log::info!/warn! 生效
-            let _ = env_logger::Builder::from_env(
-                env_logger::Env::default().default_filter_or("info"),
-            )
-            .try_init();
+            let _ =
+                env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+                    .try_init();
 
             // 不再把窗口设置为全屏 overlay，避免透明置顶窗口劫持整个屏幕的鼠标操作。
             // 仅把窗口定位到主显示器工作区右下角（桌宠习惯位置），并启动“光标穿透”轮询：
@@ -48,22 +65,22 @@ pub fn run() {
                 }
                 if !restored {
                     if let Some(monitor) = window
-                    .primary_monitor()
-                    .ok()
-                    .flatten()
-                    .or(window.current_monitor().ok().flatten())
-                {
-                    let scale = monitor.scale_factor();
-                    let wa = monitor.work_area();
-                    let wa_pos = wa.position.to_logical::<f64>(scale);
-                    let wa_size = wa.size.to_logical::<f64>(scale);
-                    let size = window
-                        .inner_size()
-                        .unwrap_or(tauri::PhysicalSize::new(420, 460))
-                        .to_logical::<f64>(scale);
-                    let x = (wa_pos.x + wa_size.width - size.width - 24.0).max(0.0);
-                    let y = (wa_pos.y + wa_size.height - size.height - 24.0).max(0.0);
-                    let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+                        .primary_monitor()
+                        .ok()
+                        .flatten()
+                        .or(window.current_monitor().ok().flatten())
+                    {
+                        let scale = monitor.scale_factor();
+                        let wa = monitor.work_area();
+                        let wa_pos = wa.position.to_logical::<f64>(scale);
+                        let wa_size = wa.size.to_logical::<f64>(scale);
+                        let size = window
+                            .inner_size()
+                            .unwrap_or(tauri::PhysicalSize::new(420, 460))
+                            .to_logical::<f64>(scale);
+                        let x = (wa_pos.x + wa_size.width - size.width - 24.0).max(0.0);
+                        let y = (wa_pos.y + wa_size.height - size.height - 24.0).max(0.0);
+                        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
                     }
                 }
 

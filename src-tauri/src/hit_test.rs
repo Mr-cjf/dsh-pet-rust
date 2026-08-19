@@ -75,8 +75,12 @@ mod win {
                 if unsafe { GetCursorPos(&mut pt) }.is_err() {
                     continue;
                 }
-                let Ok(pos) = window.outer_position() else { continue };
-                let Ok(scale) = window.scale_factor() else { continue };
+                let Ok(pos) = window.outer_position() else {
+                    continue;
+                };
+                let Ok(scale) = window.scale_factor() else {
+                    continue;
+                };
                 let scale = scale.max(1.0);
                 let region = super::get_hit_region();
                 let inside = region.map_or(false, |r| {

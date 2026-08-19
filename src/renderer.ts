@@ -1,7 +1,9 @@
 // src/renderer.ts —— 前端渲染编排：全屏容器 + whaleClient + dsh-state 订阅
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import type { AnimKey, DshSnapshot } from './whale/types';
 import { init as initWhale, WhaleClient } from './whale/whaleClient';
+import { applySkin, resetSkin } from './whale/videoManifest';
 
 interface DshStateEvent {
   state: string;
@@ -24,6 +26,20 @@ function hasTauriRuntime(): boolean {
 
 function toSnapshot(state: string): DshSnapshot {
   return { state, attention: [], running: [], done: [] };
+}
+
+async function applyConfiguredTheme(client: WhaleClient): Promise<void> {
+  try {
+    const theme = await invoke<{ theme_id: string; animations: Record<string, string[]> | null }>('get_theme');
+    if (theme.animations) {
+      applySkin(theme.animations);
+    } else {
+      resetSkin();
+    }
+    client.reloadCurrent();
+  } catch {
+    resetSkin();
+  }
 }
 
 export function initRenderer(): void {
@@ -66,6 +82,19 @@ export function initRenderer(): void {
             done: snap.done ?? [],
           });
         });
+
+        // 免打扰切换
+        await listen<boolean>('pet-dnd', (event) => {
+          client.setDnd(!!event.payload);
+        });
+
+        // 皮肤切换事件（托盘点击）
+        await listen<string>('theme-changed', () => {
+          void applyConfiguredTheme(client);
+        });
+
+        // 启动时加载已配置的皮肤
+        await applyConfiguredTheme(client);
 
       } catch (err) {
         console.warn('[dsh-pet] 事件监听失败', err);

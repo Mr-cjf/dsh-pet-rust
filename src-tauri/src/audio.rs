@@ -49,8 +49,8 @@ fn play(name: &str, app: &AppHandle) {
 
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
         use windows::core::PCWSTR;
+        use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
         // PlaySoundW 直接后台播放 WAV，不弹任何窗口
         let wide: Vec<u16> = path
             .to_string_lossy()
@@ -78,6 +78,9 @@ const SOUND_COOLDOWN_MS: i64 = 10_000;
 
 /// 状态变化时的自动提示音：done -> 完成音，attention -> 审批音；带 10s 冷却。
 pub fn notify_state_change(app: &AppHandle, state: &str) {
+    if crate::tray::is_dnd_enabled() {
+        return; // 免打扰静音
+    }
     if !crate::tray::is_sound_enabled() {
         return;
     }

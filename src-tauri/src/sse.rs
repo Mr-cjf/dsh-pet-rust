@@ -36,7 +36,12 @@ impl Drop for SseHandle {
 
 /// 连接 {DSH_URL}{path} 的 SSE 流，逐帧回调 on_frame；连接建立时回调 on_open。
 /// 断线后 3s 自动重连。返回取消句柄。
-pub fn connect_sse<F, O>(client: reqwest::Client, path: String, on_frame: F, on_open: O) -> SseHandle
+pub fn connect_sse<F, O>(
+    client: reqwest::Client,
+    path: String,
+    on_frame: F,
+    on_open: O,
+) -> SseHandle
 where
     F: Fn(Value) + Send + Sync + 'static,
     O: Fn() + Send + Sync + 'static,

@@ -71,10 +71,7 @@ pub async fn rpc(client: &reqwest::Client, method: &str, payload: Value) -> Resu
         return Err(format!("HTTP {}", res.status()));
     }
 
-    let body: Value = res
-        .json()
-        .await
-        .map_err(|e| format!("invalid JSON: {e}"))?;
+    let body: Value = res.json().await.map_err(|e| format!("invalid JSON: {e}"))?;
 
     let result = body.get("result");
     let ok = result

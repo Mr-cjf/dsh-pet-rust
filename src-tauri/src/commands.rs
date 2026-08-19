@@ -1,8 +1,9 @@
 //! Tauri command：供前端 invoke 查询状态快照与移动窗口。
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use tauri::{LogicalPosition, Manager, State};
+use tauri::{Emitter, LogicalPosition, Manager, State};
 
 use crate::engine::{self, Snapshot};
 use crate::hit_test::{self, Rect};
@@ -39,6 +40,189 @@ pub fn get_pet_size(app: tauri::AppHandle) -> f64 {
         s *= 1.2;
     }
     s
+}
+
+/// 返回所有可用皮肤列表。
+#[tauri::command]
+pub fn get_themes(app: tauri::AppHandle) -> Vec<crate::theme::ThemeInfo> {
+    crate::theme::scan_themes(&app)
+}
+
+/// 返回当前皮肤：{ theme_id, animations: {事件名: 绝对路径数组} }。
+/// 每个事件值都是数组（归一化后），即使主题里只填了单字符串，也返回单元素数组。
+/// 文件名不存在的元素会被丢弃，前端据此在多动画池里随机选择。
+#[tauri::command]
+pub fn get_theme(app: tauri::AppHandle) -> serde_json::Value {
+    let cfg = crate::config::load(&app);
+    let id = cfg.theme;
+    if id.is_empty() {
+        return serde_json::json!({ "theme_id": "", "animations": null });
+    }
+    let Some(theme) = crate::theme::load_theme(&app, &id) else {
+        return serde_json::json!({ "theme_id": id, "animations": null });
+    };
+    let mut anims = serde_json::Map::new();
+    for (k, files) in crate::theme::normalized_animations(&theme) {
+        let mut arr = Vec::new();
+        for f in files {
+            if let Some(path) = crate::theme::theme_animation_path(&app, &id, &f) {
+                arr.push(serde_json::Value::String(
+                    path.to_string_lossy().to_string(),
+                ));
+            }
+        }
+        if !arr.is_empty() {
+            anims.insert(k, serde_json::Value::Array(arr));
+        }
+    }
+    serde_json::json!({ "theme_id": id, "animations": anims })
+}
+
+#[tauri::command]
+pub fn get_theme_definition(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    let theme = crate::theme::load_theme(&app, &id).ok_or_else(|| "皮肤不存在".to_string())?;
+    let animations = crate::theme::normalized_animations(&theme)
+        .into_iter()
+        .map(|(key, files)| {
+            let paths = files
+                .into_iter()
+                .filter_map(|file| crate::theme::theme_animation_path(&app, &id, &file))
+                .map(|path| path.to_string_lossy().to_string())
+                .collect::<Vec<_>>();
+            (key, paths)
+        })
+        .filter(|(_, files)| !files.is_empty())
+        .collect::<HashMap<_, _>>();
+    Ok(serde_json::json!({ "id": id, "name": theme.name, "animations": animations }))
+}
+
+/// 使用桌面原生文件对话框选择一个或多个 WebM 动画文件。
+/// 返回绝对路径，避免依赖 WebView2 不保证提供的 `File.path` 属性。
+#[tauri::command]
+pub fn pick_webm_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let files = rfd::FileDialog::new()
+        .add_filter("WebM 动画", &["webm"])
+        .set_title("选择 WebM 动画（可多选）")
+        .pick_files()
+        .unwrap_or_default();
+    let staging = crate::theme::themes_dir(&app).join(".editor-staging");
+    std::fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+    let batch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let mut paths = Vec::new();
+    for (index, source) in files.into_iter().enumerate() {
+        let name = source
+            .file_name()
+            .and_then(|v| v.to_str())
+            .ok_or_else(|| "动画文件名无效".to_string())?;
+        if !name.to_ascii_lowercase().ends_with(".webm") {
+            return Err(format!("仅支持 webm：{name}"));
+        }
+        let target = staging.join(format!("{batch}-{index}-{name}"));
+        std::fs::copy(&source, &target).map_err(|e| e.to_string())?;
+        paths.push(target.to_string_lossy().to_string());
+    }
+    Ok(paths)
+}
+
+#[tauri::command]
+pub fn save_theme(
+    app: tauri::AppHandle,
+    id: Option<String>,
+    name: String,
+    animations: HashMap<String, Vec<String>>,
+) -> Result<crate::theme::ThemeInfo, String> {
+    let clean_name = name.trim();
+    if clean_name.is_empty() {
+        return Err("请输入皮肤名称".to_string());
+    }
+    let theme_id = id.filter(|v| !v.trim().is_empty()).unwrap_or_else(|| {
+        let slug: String = clean_name
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        format!("custom-{}-{}", slug.trim_matches('-'), std::process::id())
+    });
+    if theme_id == "" || theme_id.contains("..") || theme_id.contains(['/', '\\']) {
+        return Err("皮肤标识无效".to_string());
+    }
+    let dir = crate::theme::themes_dir(&app).join(&theme_id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut stored = HashMap::new();
+    for (key, files) in animations {
+        let mut out = Vec::new();
+        for (index, file) in files.into_iter().enumerate() {
+            let trimmed = file.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let source = std::path::PathBuf::from(trimmed);
+            let target_name = source
+                .file_name()
+                .and_then(|v| v.to_str())
+                .ok_or_else(|| "动画文件名无效".to_string())?;
+            if !target_name.to_ascii_lowercase().ends_with(".webm") {
+                return Err(format!("仅支持 webm：{}", target_name));
+            }
+            let target = dir.join(target_name);
+            if source.is_absolute() && source.exists() {
+                if source == target {
+                    out.push(target_name.to_string());
+                    continue;
+                }
+                let final_target = if target.exists() {
+                    dir.join(format!(
+                        "{}-{}.webm",
+                        target_name.trim_end_matches(".webm"),
+                        index
+                    ))
+                } else {
+                    target
+                };
+                std::fs::copy(&source, &final_target).map_err(|e| e.to_string())?;
+                out.push(
+                    final_target
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string(),
+                );
+            } else if !source.is_absolute() && dir.join(&source).exists() {
+                out.push(source.to_string_lossy().to_string());
+            } else {
+                return Err(format!("动画文件不存在：{trimmed}"));
+            }
+        }
+        if !out.is_empty() {
+            stored.insert(key, out);
+        }
+    }
+    let json = serde_json::json!({ "name": clean_name, "animations": stored });
+    std::fs::write(
+        dir.join("theme.json"),
+        serde_json::to_string_pretty(&json).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let mut cfg = crate::config::load(&app);
+    cfg.theme = theme_id.clone();
+    crate::config::save(&app, &cfg);
+    let info = crate::theme::ThemeInfo {
+        id: theme_id.clone(),
+        name: clean_name.to_string(),
+    };
+    let _ = app.emit("theme-changed", theme_id);
+    Ok(info)
 }
 
 /// 返回主窗口当前位置（逻辑坐标，CSS 像素，与前端 e.screenX/e.screenY 一致）。

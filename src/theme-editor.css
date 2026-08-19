@@ -1,0 +1,20 @@
+body.editor-page { background:#f5f7fb; color:#192238; overflow:auto; }
+.editor-shell { max-width:1180px; margin:0 auto; padding:34px 38px 28px; }
+.editor-header { display:flex; justify-content:space-between; align-items:flex-start; gap:24px; margin-bottom:24px; }
+.eyebrow,.panel-kicker { color:#5470a7; font-size:11px; font-weight:800; letter-spacing:1.8px; }
+h1 { margin:5px 0 7px; font-size:30px; letter-spacing:0; } h2 { margin:5px 0 8px; font-size:20px; } h3 { font-size:15px; }
+.editor-header p,.preview-panel p { color:#68748d; font-size:13px; }
+button,input,select { font:inherit; } button { border:0; cursor:pointer; }
+.ghost-button,.secondary-button,.icon-button,.add-file { background:#fff; color:#38517e; border:1px solid #d9e0ee; border-radius:7px; padding:9px 13px; }
+.primary-button { background:#315fc5; color:#fff; border-radius:7px; padding:11px 20px; font-weight:700; }
+.editor-toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:end; padding:15px; background:#fff; border:1px solid #e3e8f2; border-radius:9px; margin-bottom:18px; }
+.field { display:grid; gap:6px; color:#68748d; font-size:12px; min-width:220px; } .field input,.field select { border:1px solid #d7dfed; border-radius:6px; padding:9px 10px; color:#1c2943; background:#fff; }
+.editor-content { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(260px,.6fr); gap:18px; align-items:start; }
+.event-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.event-card,.preview-panel { background:#fff; border:1px solid #e3e8f2; border-radius:9px; padding:15px; } .event-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.required,.optional { font-size:11px; padding:4px 7px; border-radius:4px; } .required { color:#a55332; background:#fff0e9; } .optional { color:#61708b; background:#eef2f8; }
+.file-slots { display:grid; gap:7px; min-height:30px; } .file-row { display:flex; align-items:center; gap:7px; padding:8px 9px; background:#f6f8fc; border-radius:6px; font-size:12px; } .file-row span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+.icon-button { padding:5px 7px; font-size:11px; } .danger { color:#a24d4d; } .add-file { width:100%; margin-top:11px; border-style:dashed; font-size:12px; }
+.preview-panel { position:sticky; top:18px; } .theme-preview-video { width:100%; aspect-ratio:1; margin:18px 0 10px; background:#111827; border-radius:7px; object-fit:contain; } .preview-hint { color:#7a8498; font-size:12px; line-height:1.5; }
+.editor-footer { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-top:20px; } .editor-status { color:#3b6e57; font-size:13px; min-height:20px; } .editor-status.error { color:#a14e4e; }
+@media (max-width:800px) { .editor-shell { padding:22px 18px; } .editor-content { grid-template-columns:1fr; } .preview-panel { position:static; } .event-list { grid-template-columns:1fr; } }

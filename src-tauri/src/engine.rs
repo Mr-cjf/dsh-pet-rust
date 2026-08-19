@@ -432,11 +432,7 @@ fn handle_host_frame(
 }
 
 /// 启动引擎：先自动发现 DSH，再启动 SSE（mux + host）+ 2s 轮询，永不返回。
-pub async fn run(
-    state: Arc<Mutex<EngineState>>,
-    client: reqwest::Client,
-    sink: SnapshotSink,
-) {
+pub async fn run(state: Arc<Mutex<EngineState>>, client: reqwest::Client, sink: SnapshotSink) {
     // 发现专用短超时 client：逐端口探测要快，不能拖慢启动。
     let discovery_client = reqwest::Client::builder()
         .connect_timeout(Duration::from_millis(500))

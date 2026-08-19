@@ -130,4 +130,3 @@ pub async fn discover_dsh_url(client: &reqwest::Client) -> Option<String> {
 
     None
 }
-

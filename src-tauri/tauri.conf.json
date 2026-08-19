@@ -22,10 +22,28 @@
         "skipTaskbar": true,
         "resizable": false,
         "shadow": false
+      },
+      {
+        "label": "theme-editor",
+        "title": "皮肤编辑器",
+        "url": "index.html?editor=1",
+        "width": 980,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 560,
+        "visible": false,
+        "resizable": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPCONFIG/themes/**",
+          "$APPCONFIG/**"
+        ]
+      }
     }
   },
   "bundle": {

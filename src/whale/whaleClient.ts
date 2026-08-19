@@ -83,6 +83,7 @@ export class WhaleClient {
   private clickTimer: number | null = null;
   private easterEggQueue: AnimKey[] = [];
   private easterEggEnabled = true;
+  private dnd = false; // 免打扰：隐藏气泡
 
   private onWindowResize = (): void => this.renderPos();
 
@@ -148,7 +149,7 @@ export class WhaleClient {
     }
 
     // 气泡（idle 无气泡；offline 气泡单独显示）
-    if (mapped.bubbleText) this.bubble.show(mapped.bubbleText);
+    if (mapped.bubbleText && !this.dnd) this.bubble.show(mapped.bubbleText);
     else if (mapped.kind !== 'offline') this.bubble.hide();
 
     if (!changed) return; // 同状态快照：只刷新气泡
@@ -225,6 +226,19 @@ export class WhaleClient {
 
   private renderPos(): void {
     // 鲸鱼娘固定在窗口内，窗口由拖拽/自动移动驱动，无需在此移动元素
+  }
+
+  /** 免打扰模式切换：隐藏气泡并立即关闭当前气泡。 */
+  setDnd(enabled: boolean): void {
+    this.dnd = enabled;
+    if (enabled) this.bubble.hide();
+  }
+
+  /** 皮肤切换后重新加载当前动画（用新的动画文件）。 */
+  reloadCurrent(): void {
+    if (!this.video) return;
+    const loop = this.phase === 'idle' || this.phase === 'offline' || this.phase === 'work';
+    this.video.play(this.curKey, !loop, true); // force 重载皮肤动画
   }
 
   private applySize(): void {
@@ -495,7 +509,7 @@ export class WhaleClient {
   }
 
   private playEasterEgg(): void {
-    this.bubble.show('彩蛋！');
+    if (!this.dnd) this.bubble.show('彩蛋！');
     this.easterEggQueue = ['act_spin', 'fx_bubbles', 'act_caught'];
     this.playNextEasterEgg();
   }

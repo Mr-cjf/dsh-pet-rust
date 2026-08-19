@@ -1,6 +1,6 @@
 // src/whale/videoManager.ts —— 双缓冲 A/B video 播放管理
 import type { AnimKey } from './types';
-import { MANIFEST } from './videoManifest';
+import { MANIFEST, pickAnimationFile } from './videoManifest';
 import { el, style } from './dom';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -62,9 +62,9 @@ export class VideoManager {
     return !!this.current && this.current.key === key && this.current.once === once;
   }
 
-  /** 播放动画；once=true 播一次触发 onEnded，false 循环 */
-  play(key: AnimKey, once: boolean): void {
-    if (this.isPlaying(key, once)) return; // 已在播同样动画，去重
+  /** 播放动画；once=true 播一次触发 onEnded，false 循环；force=true 强制重载（皮肤切换用） */
+  play(key: AnimKey, once: boolean, force = false): void {
+    if (!force && this.isPlaying(key, once)) return; // 已在播同样动画，去重
     const entry = MANIFEST[key];
     const nextGen = ++this.gen;
     this.pending = { key, once, gen: nextGen };
@@ -72,7 +72,8 @@ export class VideoManager {
     // 目标 = 当前非显示层
     const target = this.frontIndex === 0 ? this.frontB : this.frontA;
     const old = this.frontIndex === 0 ? this.frontA : this.frontB;
-    target.src = entry.file;
+    const file = pickAnimationFile(key);
+    target.src = file;
     target.loop = once ? false : entry.loop;
     target.onended = once ? this.makeEnded(nextGen) : null;
     target.currentTime = 0;
@@ -88,15 +89,15 @@ export class VideoManager {
       this.current = { key, once };
       target.style.transform = this.facingTransform();
       target.play().catch(() => {});
-      void invoke('frontend_log', { msg: `video ready: ${key} ${entry.file} w=${target.videoWidth} h=${target.videoHeight}` }).catch(() => undefined);
+      void invoke('frontend_log', { msg: `video ready: ${key} ${file} w=${target.videoWidth} h=${target.videoHeight}` }).catch(() => undefined);
     };
     target.addEventListener('loadeddata', onReady);
 
     const onError = () => {
       target.removeEventListener('error', onError);
       if (this.pending?.gen !== nextGen) return; // 过期回调放弃
-      console.error('[videoManager] 视频加载失败:', entry.file);
-      void invoke('frontend_log', { msg: `video ERROR: ${key} ${entry.file}` }).catch(() => undefined);
+      console.error('[videoManager] 视频加载失败:', file);
+      void invoke('frontend_log', { msg: `video ERROR: ${key} ${file}` }).catch(() => undefined);
       this.pending = null;
     };
     target.addEventListener('error', onError);

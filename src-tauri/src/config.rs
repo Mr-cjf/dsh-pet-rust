@@ -18,6 +18,10 @@ pub struct PetConfig {
     pub easter_egg_enabled: bool,
     /// 位置记忆开关
     pub remember_position: bool,
+    /// 当前皮肤 id（空 = 内置默认鲸鱼娘）
+    pub theme: String,
+    /// 免打扰模式
+    pub dnd_enabled: bool,
 }
 
 impl Default for PetConfig {
@@ -28,6 +32,8 @@ impl Default for PetConfig {
             sound_enabled: true,
             easter_egg_enabled: true,
             remember_position: true,
+            theme: String::new(),
+            dnd_enabled: false,
         }
     }
 }
@@ -62,8 +68,12 @@ pub fn remember_window_position(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let Ok(pos) = window.outer_position() else { return };
-    let Ok(scale) = window.scale_factor() else { return };
+    let Ok(pos) = window.outer_position() else {
+        return;
+    };
+    let Ok(scale) = window.scale_factor() else {
+        return;
+    };
     let scale = scale.max(1.0);
     let mut config = load(app);
     config.window_x = Some(pos.x as f64 / scale);
